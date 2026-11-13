@@ -1,7 +1,7 @@
 {
   "lines": ["1호선", "2호선", "3호선", "4호선", "5호선", "6호선", "7호선", "8호선"],
   "windows": [["06:30", "09:30"], ["17:30", "20:30"]],
-  "weekdays": [0, 1, 2, 3, 4, 5, 6],
+  "weekdays": [0, 1, 2, 3, 4],
   "position_interval_seconds": 15,
   "arrival_sample_seconds": 120,
   "boarding_volume_months": 0,
