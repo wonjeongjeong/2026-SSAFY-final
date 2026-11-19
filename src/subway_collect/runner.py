@@ -4,7 +4,7 @@ from datetime import timedelta
 import logging
 import time
 
-from .config import DAYS, DIRECTION_CODES, load_keys, now, source_time
+from .config import DAYS, DIRECTION_CODES, TIMETABLE_LINES, load_keys, now, source_time
 from .derive import save_arrival_samples, save_positions, match_delays
 from .http import Client
 from .providers import (arrival_response, arrival_url, position_response, position_url, public_response,
@@ -194,6 +194,8 @@ class Runner:
         current = self.clock()
         day_type = self.day_type(current)
         for line in self.config.values['lines']:
+            if line not in TIMETABLE_LINES:
+                continue  # 실시간 수신 가능과 이 시간표 API 제공 범위는 다르다.
             directions = ('내선', '외선') if line == '2호선' else ('상행', '하행')
             for direction in directions:
                 for dtype in (day_type, '상시'):

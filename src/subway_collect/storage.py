@@ -33,10 +33,15 @@ class Store:
 
     def add_missing_columns(self):
         """기존 DB에 새 컬럼을 더한다(멱등). CREATE TABLE IF NOT EXISTS는 이미 있는 표를 바꾸지 않는다."""
-        columns = {r[1] for r in self.db.execute('PRAGMA table_info(delays)')}
-        if 'match_method' not in columns:
-            with self.db:
-                self.db.execute('ALTER TABLE delays ADD COLUMN match_method TEXT')
+        additions = {'delays': {'match_method':'TEXT'},
+                     'positions': {'express_code':'TEXT', 'train_type':'TEXT'},
+                     'arrival_samples': {'train_type':'TEXT', 'eta_seconds':'INTEGER'}}
+        with self.db:
+            for table, definitions in additions.items():
+                columns = {r[1] for r in self.db.execute(f'PRAGMA table_info({table})')}
+                for column, sql_type in definitions.items():
+                    if column not in columns:
+                        self.db.execute(f'ALTER TABLE {table} ADD COLUMN {column} {sql_type}')
 
     def fix_timetable_directions(self):
         """2026-11-11 이전 버전은 2호선 내선/외선 코드를 위치 API와 반대로 저장했다. 원문 기준으로 바로잡는다(멱등)."""

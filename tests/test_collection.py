@@ -44,7 +44,7 @@ class WindowsTests(Fixture):
         for day in range(7):
             d = TUESDAY+timedelta(days=day)
             for hour, minute, expected in [(6,29,False),(6,30,True),(9,29,True),(9,30,False),(17,30,True),(20,29,True),(20,30,False)]:
-                self.assertEqual(self.config.active(d.replace(hour=hour,minute=minute)), expected)
+                self.assertEqual(self.config.active(d.replace(hour=hour,minute=minute)), expected and d.weekday() in self.config.values['weekdays'])
         late = TUESDAY.replace(hour=21)
         self.assertEqual(self.config.next_start(late), TUESDAY.replace(day=11,hour=6,minute=30))
 
@@ -246,7 +246,7 @@ class ReliabilityTests(Fixture):
 
 class NewSourceTests(Fixture):
     def test_line_scope_rejects_out_of_service_lines(self):
-        self.config.values['lines'] = ['2호선', '9호선']
+        self.config.values['lines'] = ['2호선', '99호선']
         with self.assertRaises(ValueError):
             self.config.validate()
 
@@ -261,12 +261,84 @@ class NewSourceTests(Fixture):
         self.assertIn('3%ED%98%B8%EC%84%A0',urls[0])
 
     def test_arrival_samples_keep_only_service_lines(self):
+        self.config.values['lines']=['2호선']
         rows=[dict(subwayId='1002',statnId='1002000222',statnNm='강남',btrainNo='2001',updnLine='내선',arvlCd='1',recptnDt='2026-11-10 18:00:05'),
               dict(subwayId='1009',statnId='1009000925',statnNm='신논현',btrainNo='9001',updnLine='상행',arvlCd='1',recptnDt='2026-11-10 18:00:05')]
         self.assertEqual(save_arrival_samples(self.store,self.config,rows,TUESDAY),1)
         self.assertEqual(save_arrival_samples(self.store,self.config,rows,TUESDAY),0)
         row=self.store.db.execute('SELECT * FROM arrival_samples').fetchone()
         self.assertEqual((row['line'],row['train_no'],row['arrival_code']),('2호선','2001','1'))
+
+    def test_all_19_realtime_lines_are_accepted(self):
+        from src.subway_collect.config import LINE_IDS
+        self.assertEqual(len(LINE_IDS),19)
+        self.config.values['lines']=list(LINE_IDS)
+        self.config.validate()
+
+    def test_new_lines_and_express_arrival_fields_are_kept(self):
+        from src.subway_collect.config import LINE_IDS
+        rows=[dict(subwayId=code,statnId=code+'0001',statnNm='테스트역',btrainNo='T'+code,
+                   updnLine='상행',arvlCd='3',recptnDt=TUESDAY.isoformat(),
+                   btrainSttus='급행' if name=='9호선' else '일반',barvlDt='125')
+              for name,code in LINE_IDS.items()]
+        self.assertEqual(save_arrival_samples(self.store,self.config,rows,TUESDAY),19)
+        row=self.store.db.execute("SELECT train_type,eta_seconds FROM arrival_samples WHERE line='9호선'").fetchone()
+        self.assertEqual(tuple(row),('급행',125))
+
+    def test_position_express_special_and_unknown_are_distinct(self):
+        for i,(code,kind) in enumerate((('0','일반'),('1','급행'),('7','특급'),('9',None),(None,None))):
+            row=self.row(directAt=code)
+            row['trainNo']=str(9000+i)
+            save_positions(self.store,self.config,[row],TUESDAY,'9호선')
+            got=self.store.db.execute('SELECT express_code,train_type FROM positions WHERE train_no=?',(row['trainNo'],)).fetchone()
+            self.assertEqual(tuple(got),(code,kind))
+
+    def test_requested_lines_keep_both_local_and_express_trains(self):
+        from src.subway_collect.config import LINE_IDS
+        lines=['1호선','4호선','경의중앙선','수인분당선','9호선']
+        arrival_rows=[]
+        for line in lines:
+            for i,(code,kind) in enumerate((('0','일반'),('1','급행'))):
+                row=self.row(directAt=code)
+                # Train numbers may overlap across operators; line identity must survive.
+                row['trainNo']=str(100+i)
+                save_positions(self.store,self.config,[row],TUESDAY,line)
+                arrival_rows.append(dict(subwayId=LINE_IDS[line],statnId=row['statnId'],
+                    statnNm=row['statnNm'],btrainNo=row['trainNo'],updnLine='상행',arvlCd='1',
+                    recptnDt=TUESDAY.isoformat(),btrainSttus=kind,barvlDt='120'))
+        self.assertEqual(save_arrival_samples(self.store,self.config,arrival_rows,TUESDAY),10)
+        expected={(line,kind,1) for line in lines for kind in ('일반','급행')}
+        for table in ('positions','arrival_samples'):
+            got={tuple(r) for r in self.store.db.execute(f'SELECT line,train_type,count(*) FROM {table} GROUP BY line,train_type')}
+            self.assertEqual(got,expected)
+
+    def test_new_lines_are_not_sent_to_the_metro_only_timetable_api(self):
+        runner=Runner(self.config,self.store,clock=lambda:TUESDAY)
+        runner.keys={'DATA_GO_KR_API_KEY':'test'}
+        self.config.values['lines']=['9호선','GTX-A','경의중앙선','서해선']
+        runner.client.fetch=lambda *args,**kwargs: self.fail('unsupported timetable call')
+        self.assertFalse(runner.timetable_step())
+
+    def test_expanded_collection_fits_the_daily_budget(self):
+        from src.subway_collect.config import minutes
+        v=self.config.values
+        seconds=sum((minutes(b)-minutes(a))*60 for a,b in v['windows'])
+        calls=len(v['lines'])*seconds/v['position_interval_seconds']+seconds/v['arrival_sample_seconds']
+        self.assertLessEqual(calls,v['daily_budgets']['seoul_subway'])
+
+    def test_old_database_adds_columns_without_rewriting_original_rows(self):
+        self.save(0,'0')
+        self.store.close()
+        import sqlite3
+        from contextlib import closing
+        with closing(sqlite3.connect(self.root/'data/subway.sqlite3')) as db, db:
+            for column in ('express_code','train_type'):
+                db.execute(f'ALTER TABLE positions DROP COLUMN {column}')
+            for column in ('train_type','eta_seconds'):
+                db.execute(f'ALTER TABLE arrival_samples DROP COLUMN {column}')
+        self.store=Store(self.root)
+        row=self.store.db.execute('SELECT train_no,express_code,train_type FROM positions').fetchone()
+        self.assertEqual(tuple(row),('2001',None,None))
 
     def test_arrival_and_open_api_errors_are_not_empty_success(self):
         with self.assertRaises(SourceError):

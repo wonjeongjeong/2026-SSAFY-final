@@ -10,8 +10,14 @@ ROOT = Path(__file__).resolve().parents[2]
 KST = timezone(timedelta(hours=9))
 DAYS = ('MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN')
 KEY_NAMES = ('SEOUL_SUBWAY_API_KEY', 'SEOUL_OPEN_API_KEY', 'DATA_GO_KR_API_KEY')
-# 서울 열린데이터광장 실시간 지하철 API의 subwayId. 서비스 범위인 서울교통공사 1~8호선만 둔다.
-LINE_IDS = {f'{n}호선': str(1000 + n) for n in range(1, 9)}
+# 2026-11-16 실제 인증 응답으로 확인한 19개 노선. 시간표 범위와 분리한다.
+LINE_IDS = {
+    **{f'{n}호선': str(1000 + n) for n in range(1, 10)},
+    'GTX-A':'1032', '경의중앙선':'1063', '공항철도':'1065', '경춘선':'1067',
+    '수인분당선':'1075', '신분당선':'1077', '경강선':'1081',
+    '우이신설선':'1092', '서해선':'1093', '신림선':'1094',
+}
+TIMETABLE_LINES = tuple(f'{n}호선' for n in range(1,9))
 # 위치 API updnLine 코드: 0 = 상행/내선, 1 = 하행/외선 (통용 명세. 2호선 외선 열차가 '1'로 오는 실측 사례와 일치).
 # 시간표의 upbdnbSe 문자열을 같은 코드로 바꿔 비교한다. 어긋나면 match_status='direction_mismatch'로 드러난다.
 DIRECTION_CODES = {'상행': '0', '내선': '0', '하행': '1', '외선': '1'}
@@ -77,7 +83,7 @@ class Config:
         if any(not isinstance(n, int) or n < 1 for n in v['daily_budgets'].values()):
             raise ValueError('budgets must be positive integers')
         if any(line not in LINE_IDS for line in v['lines']):
-            raise ValueError('lines must be Seoul Metro 1호선..8호선 (proposal ch.9)')
+            raise ValueError('lines must be verified Seoul realtime API line names')
         if v.get('arrival_sample_seconds', 0) and v['arrival_sample_seconds'] < 60:
             raise ValueError('arrival_sample_seconds must be 0 (off) or >= 60')
         if not 0 <= v.get('boarding_volume_months', 0) <= 12:
