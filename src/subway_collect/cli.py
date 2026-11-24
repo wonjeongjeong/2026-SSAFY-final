@@ -11,7 +11,7 @@ import shutil
 from pathlib import Path
 import time
 
-from .config import Config, DAYS, ROOT, load_keys, now
+from .config import Config, DAYS, ROOT, TIMETABLE_LINES, load_keys, now
 from .derive import match_delays
 from .runner import Runner
 from .storage import Store, dumps
@@ -71,6 +71,8 @@ def health(config, store):
             verdict='limit_hit' if quota['limited'] else 'lifted_confirmed' if (quota['ok'] or 0) > 1000 else 'not_yet_verified'),
         disk_free_gb=round(shutil.disk_usage(store.data).free / 1e9, 1),
         local_budget_remaining=remaining,
+        realtime_lines=config.values['lines'],
+        timetable_lines=[line for line in config.values['lines'] if line in TIMETABLE_LINES],
         delay_matching=matches, last_position={line: store.get('last_position:' + line) for line in config.values['lines']},
         train_congestion='seoul_metro_quarterly_statistic_via_load_reference_not_realtime',
         realtime_platform_crowding='unavailable_no_verified_public_source')

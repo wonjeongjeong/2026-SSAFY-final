@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS positions (
  session TEXT NOT NULL, collected_at TEXT NOT NULL, observed_at TEXT,
  line TEXT NOT NULL, train_no TEXT NOT NULL, station_id TEXT,
  station_name TEXT, direction TEXT, train_status TEXT,
- quality TEXT NOT NULL, payload_json TEXT NOT NULL
+ quality TEXT NOT NULL, payload_json TEXT NOT NULL,
+ express_code TEXT, train_type TEXT
 );
 CREATE INDEX IF NOT EXISTS position_trajectory ON positions(date_kst,line,train_no,observed_at);
 CREATE TABLE IF NOT EXISTS arrivals (
@@ -57,7 +58,8 @@ CREATE TABLE IF NOT EXISTS arrival_samples (
  event_id TEXT PRIMARY KEY, date_kst TEXT NOT NULL, dow TEXT NOT NULL,
  session TEXT NOT NULL, collected_at TEXT NOT NULL, observed_at TEXT,
  line TEXT NOT NULL, train_no TEXT, station_id TEXT, station_name TEXT,
- direction TEXT, arrival_code TEXT, payload_json TEXT NOT NULL
+ direction TEXT, arrival_code TEXT, payload_json TEXT NOT NULL,
+ train_type TEXT, eta_seconds INTEGER
 );
 CREATE INDEX IF NOT EXISTS arrival_sample_match ON arrival_samples(date_kst,line,train_no,station_name);
 CREATE TABLE IF NOT EXISTS boarding_volume (

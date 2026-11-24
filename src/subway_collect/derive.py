@@ -9,6 +9,17 @@ import re
 from .config import DAYS, KST, LINE_IDS, STATION_ALIASES, source_time
 from .storage import dumps, identity
 
+EXPRESS_TYPES = {'0':'일반', '1':'급행', '7':'특급'}
+
+
+def optional_int(value):
+    if value is None or isinstance(value,bool):
+        return None
+    try:
+        return int(str(value))
+    except (ValueError,TypeError):
+        return None
+
 
 def save_positions(store, config, rows, current, line):
     inserted = 0
@@ -24,7 +35,9 @@ def save_positions(store, config, rows, current, line):
                           session=config.session(current), collected_at=current.isoformat(),
                           observed_at=observed.isoformat() if observed else None, line=line, train_no=train,
                           station_id=str(row['statnId']), station_name=row.get('statnNm'), direction=direction,
-                          train_status=str(row.get('trainSttus', '')), quality=quality, payload_json=dumps(row))
+                          train_status=str(row.get('trainSttus', '')), quality=quality, payload_json=dumps(row),
+                          express_code=str(row['directAt']) if row.get('directAt') is not None else None,
+                          train_type=EXPRESS_TYPES.get(str(row.get('directAt'))))
             added = store.insert('positions', values)
             inserted += added
             if not added or quality != 'fresh':
@@ -61,7 +74,7 @@ def save_arrival_samples(store, config, rows, current):
         for row in rows:
             line = names.get(str(row.get('subwayId')))
             if not line:
-                continue  # 9호선·코레일 등 서비스 범위 밖 노선은 원문(raw)에만 남긴다
+                continue  # 설정에서 제외되었거나 미검증 노선인 행은 원문에만 보존한다.
             observed = source_time(row.get('recptnDt'))
             inserted += store.insert('arrival_samples', dict(
                 event_id=identity(['arrival_sample', f'{current:%Y-%m-%d}', row]),
@@ -69,7 +82,9 @@ def save_arrival_samples(store, config, rows, current):
                 collected_at=current.isoformat(), observed_at=observed.isoformat() if observed else None,
                 line=line, train_no=str(row.get('btrainNo') or ''), station_id=str(row.get('statnId')),
                 station_name=row.get('statnNm'), direction=str(row.get('updnLine', '')),
-                arrival_code=str(row.get('arvlCd', '')), payload_json=dumps(row)))
+                arrival_code=str(row.get('arvlCd', '')), payload_json=dumps(row),
+                train_type=str(row['btrainSttus']) if row.get('btrainSttus') else None,
+                eta_seconds=optional_int(row.get('barvlDt'))))
     return inserted
 
 
