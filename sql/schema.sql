@@ -27,12 +27,21 @@ CREATE TABLE IF NOT EXISTS arrivals (
  lower_bound_at TEXT, uncertainty_seconds REAL, quality TEXT NOT NULL,
  position_event_id TEXT NOT NULL
 );
+-- 운영사 공식 파일에서 적재한 고정 시간표(코레일 XLSX 등). 매일 복사하지 않고 시행일·요일 유형으로 고른다.
+CREATE TABLE IF NOT EXISTS static_timetable (
+ event_id TEXT PRIMARY KEY, source TEXT NOT NULL, source_sha256 TEXT NOT NULL,
+ valid_from TEXT NOT NULL, day_type TEXT NOT NULL, line TEXT NOT NULL,
+ train_no TEXT NOT NULL, station_name TEXT NOT NULL, direction TEXT NOT NULL,
+ arrival_time TEXT, departure_time TEXT, payload_json TEXT NOT NULL, loaded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS static_timetable_pick ON static_timetable(line, day_type, valid_from);
 CREATE TABLE IF NOT EXISTS timetable (
  event_id TEXT PRIMARY KEY, fetched_date TEXT NOT NULL, line TEXT,
  train_no TEXT, station_id TEXT, station_name TEXT, direction TEXT,
  day_type TEXT, arrival_time TEXT, departure_time TEXT, payload_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS timetable_match ON timetable(fetched_date,train_no,station_name);
+CREATE INDEX IF NOT EXISTS arrival_day ON arrivals(date_kst);
 CREATE TABLE IF NOT EXISTS delays (
  arrival_id TEXT PRIMARY KEY, date_kst TEXT NOT NULL, dow TEXT NOT NULL,
  line TEXT NOT NULL, train_no TEXT NOT NULL, station_name TEXT,
@@ -40,6 +49,7 @@ CREATE TABLE IF NOT EXISTS delays (
  lower_delay_seconds REAL, match_status TEXT NOT NULL, timetable_event_id TEXT,
  match_method TEXT
 );
+CREATE INDEX IF NOT EXISTS delay_day ON delays(date_kst);
 CREATE TABLE IF NOT EXISTS congestion (
  event_id TEXT PRIMARY KEY, fetched_date TEXT NOT NULL, collected_at TEXT NOT NULL,
  dow TEXT NOT NULL, hour INTEGER NOT NULL, minute INTEGER NOT NULL,

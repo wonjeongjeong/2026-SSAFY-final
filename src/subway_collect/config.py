@@ -71,6 +71,8 @@ class Config:
             raise ValueError('lines must contain unique line names')
         if v['position_interval_seconds'] < 10:
             raise ValueError('position_interval_seconds must be >= 10')
+        if not isinstance(v.get('position_workers', 4), int) or not 1 <= v.get('position_workers', 4) <= 8:
+            raise ValueError('position_workers must be an integer from 1 to 8')
         if not v['weekdays'] or any(d not in range(7) for d in v['weekdays']):
             raise ValueError('weekdays must be 0..6 (Monday..Sunday)')
         windows = sorted((minutes(a), minutes(b)) for a, b in v['windows'])
@@ -84,8 +86,8 @@ class Config:
             raise ValueError('budgets must be positive integers')
         if any(line not in LINE_IDS for line in v['lines']):
             raise ValueError('lines must be verified Seoul realtime API line names')
-        if v.get('arrival_sample_seconds', 0) and v['arrival_sample_seconds'] < 60:
-            raise ValueError('arrival_sample_seconds must be 0 (off) or >= 60')
+        if v.get('arrival_sample_seconds', 0) and v['arrival_sample_seconds'] < 10:
+            raise ValueError('arrival_sample_seconds must be 0 (off) or >= 10')
         if not 0 <= v.get('boarding_volume_months', 0) <= 12:
             raise ValueError('boarding_volume_months must be 0..12')
         if v.get('boarding_volume_months', 0) and 'seoul_open' not in v['daily_budgets']:

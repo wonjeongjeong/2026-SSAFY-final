@@ -39,7 +39,7 @@ export function createJourneyUI(state,{esc,fmtTime,fmtDate,lineBadge,lineName,st
 
   function renderResults(previous){
     const r=state.result;
-    $('#result-meta').textContent=`${fmtTime(r.as_of)} 계산 · 30초마다 자동 갱신`;
+    $('#result-meta').textContent=`${fmtTime(r.as_of)} 계산 · 15초마다 자동 갱신`;
     $('#live-status').innerHTML=`<i class="${r.live.used_anchors?'':'is-muted'}"></i><span>${r.live.used_anchors?'실시간 도착정보 반영':'실제 시간표 기준'}${r.live.collected_at?` · ${fmtTime(r.live.collected_at)} 수신`:''}</span><button type="button" id="refresh-now">지금 갱신 ↻</button>`;
     $('#refresh-now').onclick=()=>search();
     const warning=r.warnings.filter(w=>!w.startsWith('시간표 미확보')).map(w=>`<p>${esc(w)}</p>`).join('');
@@ -79,6 +79,6 @@ export function createJourneyUI(state,{esc,fmtTime,fmtDate,lineBadge,lineName,st
     }
   }
 
-  function startRefresh(){clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(state.hasSearched&&document.visibilityState==='visible'&&new Date($('#deadline').value)>new Date())search();},30000);}
+  function startRefresh(){clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(state.hasSearched&&document.visibilityState==='visible'&&new Date($('#deadline').value)>new Date())search();},15000);}
   return {search,invalidate,startRefresh};
 }

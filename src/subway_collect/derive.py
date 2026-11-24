@@ -105,7 +105,41 @@ def strip_note(name):
     return re.sub(r'\s*\(.*?\)\s*$', '', name or '').strip()
 
 
-def station_resolver(store, date):
+def static_day_type(store, date, config=None):
+    """고정 시간표의 요일 유형(평일/휴일). 그 날 API 시간표가 공휴일로 받았으면 평일이라도 휴일로 본다."""
+    if config is not None:
+        override = config.values.get('day_type_overrides', {}).get(date)
+    else:
+        path = store.root / 'config' / 'collector.json'
+        values = json.loads(path.read_text(encoding='utf-8-sig')) if path.exists() else {}
+        override = values.get('day_type_overrides', {}).get(date)
+    if override:
+        return '평일' if override == '평일' else '휴일'
+    kinds = {r[0] for r in store.db.execute(
+        "SELECT DISTINCT day_type FROM timetable WHERE fetched_date=? AND day_type IS NOT NULL AND day_type != '상시'", (date,))}
+    if kinds:
+        return '평일' if kinds == {'평일'} else '휴일'
+    return '평일' if datetime.fromisoformat(date).weekday() < 5 else '휴일'
+
+
+def timetable_rows(store, date, config=None):
+    """그 날 짝지을 시간표 행: 매일 받는 API 시간표 + 그 날 유효한 고정 시간표(노선별 가장 최근 시행본).
+
+    API 시간표가 이미 있는 노선은 고정 시간표를 쓰지 않는다(같은 열차가 두 번 후보가 되지 않게).
+    """
+    rows = store.db.execute('SELECT event_id, line, train_no, station_name, direction, arrival_time, payload_json '
+                            'FROM timetable WHERE fetched_date=?', (date,)).fetchall()
+    kind = static_day_type(store, date, config)
+    rows += store.db.execute(
+        'SELECT s.event_id, s.line, s.train_no, s.station_name, s.direction, s.arrival_time, s.payload_json '
+        'FROM static_timetable s JOIN (SELECT line, max(valid_from) AS v FROM static_timetable '
+        '  WHERE day_type=? AND valid_from<=? GROUP BY line) m ON s.line=m.line AND s.valid_from=m.v '
+        'WHERE s.day_type=? AND s.line NOT IN (SELECT DISTINCT line FROM timetable WHERE fetched_date=? AND line IS NOT NULL)',
+        (kind, date, kind, date)).fetchall()
+    return rows
+
+
+def station_resolver(store, date, rows=None):
     """위치 API 역 이름을 그 날 시간표의 역 이름으로 바꾸는 함수를 만든다.
 
     후보(원래 이름 → 확인된 별칭 → 괄호 부기 제거)를 차례로 보고, 그 날 그 노선 시간표에
@@ -113,7 +147,7 @@ def station_resolver(store, date):
     끝내 없으면 원래 이름을 그대로 돌려줘서 unmatched_timetable로 남게 한다.
     """
     names = {}
-    for line, name in store.db.execute('SELECT DISTINCT line, station_name FROM timetable WHERE fetched_date=?', (date,)):
+    for line, name in {(r['line'], r['station_name']) for r in (rows if rows is not None else timetable_rows(store, date))}:
         if name:
             names.setdefault(line, {})[name] = name
             names[line].setdefault(strip_note(name), name)
@@ -162,91 +196,122 @@ def same_station(line, a, b):
     return bool(a) and bool(b) and canonical_station(line, a) == canonical_station(line, b)
 
 
-def match_delays(store, date):
-    """도착 관측을 그 날 시간표의 같은 열차·역·방향과 짝짓는다.
+class DelayMatcher:
+    """Reusable timetable index. Pure matching happens outside SQLite write locks."""
 
-    1) 정확한 열차번호. 종착역을 알면 종착역도 같아야 한다(다르면 destination_mismatch).
-    2) 1)이 없을 때만, 같은 열차일 수 있는 다른 번호를 본다: 코레일 'K' 표기(number_variants),
-       그리고 종점 회차 뒤 새로 붙는 연계 열차번호(시간표 lnkgTrainno). 이때는 종착역이 반드시 같아야 한다.
-    시각이 가깝다는 이유만으로는 짝짓지 않는다. 출퇴근 배차가 2~3분이라 뒤차와 짝지어지면 지연이 틀어진다.
-    어떤 방법으로 짝지었는지 match_method에 남겨, 분석에서 따로 보거나 뺄 수 있게 한다.
-    """
-    resolve = station_resolver(store, date)
-    stops = defaultdict(list)       # (line, train, station, direction) -> [(row, scheduled, destination)]
-    trains = defaultdict(set)       # line -> 시간표 열차번호
-    linked = defaultdict(set)       # (line, train) -> 연계 열차번호
-    for row in store.db.execute('SELECT * FROM timetable WHERE fetched_date=?', (date,)):
-        payload = json.loads(row['payload_json'] or '{}')
-        trains[row['line']].add(row['train_no'])
-        if payload.get('lnkgTrainno'):
-            linked[(row['line'], row['train_no'])].add(str(payload['lnkgTrainno']))
-        stops[(row['line'], row['train_no'], row['station_name'], row['direction'])].append(
-            (row, schedule_at(date, row['arrival_time']), payload.get('arvlStnNm')))
-    arrivals = store.db.execute('SELECT a.*, p.payload_json AS position_payload FROM arrivals a '
-                                'LEFT JOIN positions p ON p.event_id = a.position_event_id WHERE a.date_kst=?', (date,)).fetchall()
-    with store.db:
-        for arrival in arrivals:
-            line, train, direction = arrival['line'], arrival['train_no'], arrival['direction']
-            station = resolve(line, arrival['station_name'])
-            observed = source_time(arrival['observed_at'])
-            terminal = json.loads(arrival['position_payload'] or '{}').get('statnTnm')
-            destination = terminal or None
+    def __init__(self, store, date, config=None):
+        rows = timetable_rows(store, date, config)
+        resolve = station_resolver(store, date, rows)
+        stops = defaultdict(list)       # (line, train, station, direction) -> [(row, scheduled, destination)]
+        trains = defaultdict(set)       # line -> 시간표 열차번호
+        linked = defaultdict(set)       # (line, train) -> 연계 열차번호
+        for row in rows:
+            payload = json.loads(row['payload_json'] or '{}')
+            trains[row['line']].add(row['train_no'])
+            if payload.get('lnkgTrainno'):
+                linked[(row['line'], row['train_no'])].add(str(payload['lnkgTrainno']))
+            stops[(row['line'], row['train_no'], row['station_name'], row['direction'])].append(
+                ({'event_id': row['event_id']}, schedule_at(date, row['arrival_time']), payload.get('arvlStnNm')))
+        self.resolve, self.stops, self.trains, self.linked = resolve, stops, trains, linked
+        self.directions = defaultdict(set)
+        for line, train, station, direction in stops:
+            self.directions[(line, train, station)].add(direction)
 
-            def near(number, need_destination, limit=3600):
-                found = []
-                for row, scheduled, dest in stops.get((line, number, station, direction), []):
-                    if scheduled is None or abs((observed - scheduled).total_seconds()) > limit:
-                        continue
-                    if destination and dest and not same_station(line, destination, dest):
-                        continue
-                    if need_destination and not (destination and dest):
-                        continue
-                    found.append((row, scheduled))
-                return found
+    def values(self, arrival):
+        resolve, stops, trains, linked = self.resolve, self.stops, self.trains, self.linked
+        date = arrival['date_kst']
+        line, train, direction = arrival['line'], arrival['train_no'], arrival['direction']
+        station = resolve(line, arrival['station_name'])
+        observed = source_time(arrival['observed_at'])
+        terminal = json.loads(arrival['position_payload'] or '{}').get('statnTnm')
+        destination = terminal or None
 
-            status, method, candidates = None, None, []
-            if arrival['quality'] != 'bounded_observation':
-                status = 'unbounded_arrival'
-            else:
-                exact_rows = [(r, s) for r, s, _ in stops.get((line, train, station, direction), [])
-                              if s is not None and abs((observed - s).total_seconds()) <= 3600]
-                candidates, method = near(train, False), 'exact'
+        def near(number, need_destination, limit=3600):
+            found = []
+            for row, scheduled, dest in stops.get((line, number, station, direction), []):
+                if scheduled is None or abs((observed - scheduled).total_seconds()) > limit:
+                    continue
+                if destination and dest and not same_station(line, destination, dest):
+                    continue
+                if need_destination and not (destination and dest):
+                    continue
+                found.append((row, scheduled))
+            return found
+
+        status, method, candidates = None, None, []
+        if arrival['quality'] != 'bounded_observation':
+            status = 'unbounded_arrival'
+        else:
+            exact_rows = [(r, s) for r, s, _ in stops.get((line, train, station, direction), [])
+                          if s is not None and abs((observed - s).total_seconds()) <= 3600]
+            candidates, method = near(train, False), 'exact'
+            if not candidates:
+                variants = {v: m for v, m in number_variants(train, line).items() if v in trains[line]}
+                family = [train] + list(variants)
+                others = list(variants) + sorted({n for v in family for n in linked.get((line, v), ())} - set(family))
+                far = False
+                for number in others:
+                    # 번호를 바꿔 찾은 짝은 같은 번호·종착역의 다른 회차일 수 있다(예: 1호선 급행은 매시간).
+                    # 20분 안이면 인정하고, 그보다 멀면 지연을 확정하지 않고 표시만 한다.
+                    hits = near(number, True, INFERRED_MAX_SECONDS)
+                    far = far or bool(near(number, True))
+                    if hits:
+                        candidates += hits
+                        method = variants.get(number, 'linked_trainno')
+                if not candidates and far:
+                    status = 'unverified_large_delay'
+                if not candidates and exact_rows and status is None:
+                    # 같은 번호가 이 역·방향·시각에 있지만 종착역이 다르다: 다른 회차와 잘못 짝지어질 뻔한 경우
+                    status = 'destination_mismatch'
+            if status is None:
                 if not candidates:
-                    variants = {v: m for v, m in number_variants(train, line).items() if v in trains[line]}
-                    family = [train] + list(variants)
-                    others = list(variants) + sorted({n for v in family for n in linked.get((line, v), ())} - set(family))
-                    far = False
-                    for number in others:
-                        # 번호를 바꿔 찾은 짝은 같은 번호·종착역의 다른 회차일 수 있다(예: 1호선 급행은 매시간).
-                        # 20분 안이면 인정하고, 그보다 멀면 지연을 확정하지 않고 표시만 한다.
-                        hits = near(number, True, INFERRED_MAX_SECONDS)
-                        far = far or bool(near(number, True))
-                        if hits:
-                            candidates += hits
-                            method = variants.get(number, 'linked_trainno')
-                    if not candidates and far:
-                        status = 'unverified_large_delay'
-                    if not candidates and exact_rows and status is None:
-                        # 같은 번호가 이 역·방향·시각에 있지만 종착역이 다르다: 다른 회차와 잘못 짝지어질 뻔한 경우
-                        status = 'destination_mismatch'
-                if status is None:
-                    if not candidates:
-                        # 방향만 다르고 나머지가 맞는 시간표가 있으면 방향 코드 대응이 틀렸다는 신호다. 지연은 확정하지 않는다.
-                        other = store.db.execute('SELECT 1 FROM timetable WHERE fetched_date=? AND line=? AND train_no=? AND station_name=? AND direction IS NOT ?',
-                                                 (date, line, train, station, direction)).fetchone()
-                        status = 'direction_mismatch' if other else 'unmatched_timetable'
-                    elif len(candidates) != 1:
-                        status = 'ambiguous_timetable'
-                    else:
-                        status = 'matched_observation_interval'
-            matched, scheduled = candidates[0] if status == 'matched_observation_interval' else (None, None)
-            values = dict(arrival_id=arrival['event_id'], date_kst=date, dow=arrival['dow'],
-                          line=arrival['line'], train_no=arrival['train_no'], station_name=station,
-                          observed_at=arrival['observed_at'], scheduled_at=scheduled.isoformat() if scheduled else None,
-                          delay_seconds=(observed-scheduled).total_seconds() if scheduled else None,
-                          lower_delay_seconds=(source_time(arrival['lower_bound_at'])-scheduled).total_seconds() if scheduled else None,
-                          match_status=status, timetable_event_id=matched['event_id'] if matched else None,
-                          match_method=method if matched else None)
-            columns = ','.join(values)
-            marks = ','.join('?' for _ in values)
-            store.db.execute(f'INSERT OR REPLACE INTO delays ({columns}) VALUES ({marks})', tuple(values.values()))
+                    # 방향만 다르고 나머지가 맞는 시간표가 있으면 방향 코드 대응이 틀렸다는 신호다. 지연은 확정하지 않는다.
+                    other = any(d != direction for d in self.directions.get((line, train, station), ()))
+                    status = 'direction_mismatch' if other else 'unmatched_timetable'
+                elif len(candidates) != 1:
+                    status = 'ambiguous_timetable'
+                else:
+                    status = 'matched_observation_interval'
+        matched, scheduled = candidates[0] if status == 'matched_observation_interval' else (None, None)
+        values = dict(arrival_id=arrival['event_id'], date_kst=date, dow=arrival['dow'],
+                      line=arrival['line'], train_no=arrival['train_no'], station_name=station,
+                      observed_at=arrival['observed_at'], scheduled_at=scheduled.isoformat() if scheduled else None,
+                      delay_seconds=(observed-scheduled).total_seconds() if scheduled else None,
+                      lower_delay_seconds=(source_time(arrival['lower_bound_at'])-scheduled).total_seconds() if scheduled else None,
+                      match_status=status, timetable_event_id=matched['event_id'] if matched else None,
+                      match_method=method if matched else None)
+        return values
+
+    def write(self, store, arrivals):
+        values = [self.values(arrival) for arrival in arrivals]
+        if not values:
+            return
+        columns = ','.join(values[0])
+        marks = ','.join('?' for _ in values[0])
+        updates = ','.join(f'{key}=excluded.{key}' for key in values[0] if key != 'arrival_id')
+        with store.db:
+            store.db.executemany(
+                f'INSERT INTO delays ({columns}) VALUES ({marks}) '
+                f'ON CONFLICT(arrival_id) DO UPDATE SET {updates}',
+                [tuple(value.values()) for value in values])
+
+
+def arrival_batch(store, date, after=0, limit=250, through=None):
+    sql = ('SELECT a.rowid AS sequence, a.*, p.payload_json AS position_payload FROM arrivals a '
+           'LEFT JOIN positions p ON p.event_id=a.position_event_id '
+           'WHERE a.date_kst=? AND a.rowid>?')
+    params = [date, after]
+    if through is not None:
+        sql += ' AND a.rowid<=?'
+        params.append(through)
+    return store.db.execute(sql+' ORDER BY a.rowid LIMIT ?', (*params, limit)).fetchall()
+
+
+def match_delays(store, date, config=None):
+    """Explicit full rebuild, with bounded reads and short write transactions."""
+    matcher = DelayMatcher(store, date, config)
+    through = store.db.execute('SELECT coalesce(max(rowid),0) FROM arrivals WHERE date_kst=?', (date,)).fetchone()[0]
+    cursor = 0
+    while rows := arrival_batch(store, date, cursor, through=through):
+        matcher.write(store, rows)
+        cursor = rows[-1]['sequence']

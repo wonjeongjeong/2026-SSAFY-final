@@ -1,4 +1,4 @@
-"""위치 호출 간격(30초)을 줄일 가치가 있는지 지금 바로 확인한다.
+"""저장된 위치 관측과 원천 갱신 간격을 비교한다.
 
 1부: 이미 받은 원문(data/raw/.../positions/*.json.gz)으로, 30초 호출 사이에 놓치는 것이 있는지 본다.
 2부: 실제 API를 5초 간격으로 3분 동안 불러(36건), 원천이 몇 초마다 새 값을 주는지 직접 잰다.
@@ -23,7 +23,7 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from src.subway_collect.config import load_keys  # noqa: E402
+from src.subway_collect.config import Config, load_keys, minutes  # noqa: E402
 
 ARRIVED = '1'
 
@@ -158,13 +158,18 @@ def main():
     if live and live['under30'] >= 0.3:
         reasons.append(f"원천 값의 {live['under30']:.0%}가 30초보다 짧은 간격으로 바뀜")
     if raw and raw['arrival_seen'] is not None and raw['arrival_seen'] < 0.8:
-        reasons.append(f"30초 호출로는 역 방문의 {1 - raw['arrival_seen']:.0%}에서 '도착' 상태를 놓침")
+        reasons.append(f"저장된 관측에서 역 방문의 {1 - raw['arrival_seen']:.0%}는 '도착' 상태를 포착하지 못함")
+    settings = Config.load().values
+    seconds = sum((minutes(b) - minutes(a)) * 60 for a, b in settings['windows'])
+    position_calls = len(settings['lines']) * seconds / settings['position_interval_seconds']
+    arrival_calls = seconds / settings['arrival_sample_seconds'] if settings.get('arrival_sample_seconds') else 0
+    print(f"  현재 위치 주기 {settings['position_interval_seconds']}초, 기본 호출량 {position_calls + arrival_calls:,.0f}회/일, "
+          f"로컬 예산 {settings['daily_budgets']['seoul_subway']:,}회/일")
     if reasons:
-        print('  → 15초로 줄이는 것을 권장합니다: ' + '; '.join(reasons))
-        print('  config/collector.json: "position_interval_seconds": 15, "daily_budgets"의 "seoul_subway": 14000')
-        print('  (8개 노선 × 6시간 × 240회 = 11,520건 + 도착정보 180건 + 재시도 여유)')
+        print('  → 짧은 주기로 확인할 근거: ' + '; '.join(reasons))
+        print('  현재 주기와 원문 수집 당시 주기가 다를 수 있습니다. 원천 갱신 간격과 함께 판단하세요.')
     elif live or raw:
-        print('  → 30초 유지를 권장합니다. 더 자주 불러도 새로 얻는 정보가 적습니다.')
+        print('  → 이번 표본만으로는 주기를 더 줄일 근거가 부족합니다.')
     else:
         print('  → 판단할 데이터가 부족합니다. 위 메시지를 확인하세요.')
 

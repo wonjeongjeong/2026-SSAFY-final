@@ -32,7 +32,7 @@ def run():
     # Reuse recent collector or web responses across all local browser clients.
     record=store.db.execute("SELECT started_at,raw_path FROM requests WHERE dataset IN ('arrival_samples','web_arrivals') AND outcome='success' ORDER BY id DESC LIMIT 1").fetchone()
     rows=None;collected=None;cached=False
-    if record and (now-datetime.fromisoformat(record[0])).total_seconds()<25:
+    if record and (now-datetime.fromisoformat(record[0])).total_seconds()<15:
         with gzip.open(root/record[1],'rt',encoding='utf-8') as f: envelope=json.load(f)
         rows,_=arrival_response(json.loads(envelope['body']))
         collected=envelope.get('collected_at',record[0]);cached=True
