@@ -23,5 +23,5 @@ def live_snapshot():
             _cached=json.loads(p.stdout)
         except (OSError,ValueError,subprocess.TimeoutExpired):
             _cached={'available':False,'arrivals':[],'positions':[],'error':'실시간 연결에 실패했습니다. 시간표 기준 결과를 표시합니다.'}
-        _expires=time.monotonic()+(25 if _cached.get('available') else 10)
+        _expires=time.monotonic()+(5 if _cached.get('available') else 10)
         return _cached

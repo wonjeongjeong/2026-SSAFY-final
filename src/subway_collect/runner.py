@@ -66,12 +66,12 @@ class Runner:
     def retry_later(self, task):
         self.retry_at[task] = time.monotonic() + 120
 
-    def auxiliary_step(self):
+    def auxiliary_step(self, include_arrivals=True):
         """One supplemental request per tick, preserving position polling priority."""
         self.refresh_keys()
         if not self.config.active(self.clock()):
             return
-        if self.keys['SEOUL_SUBWAY_API_KEY'] and self.config.values.get('arrival_sample_seconds') and self.arrival_step():
+        if include_arrivals and self.keys['SEOUL_SUBWAY_API_KEY'] and self.config.values.get('arrival_sample_seconds') and self.arrival_step():
             return
         if self.keys['SEOUL_OPEN_API_KEY'] and self.config.values.get('boarding_volume_months') and self.boarding_volume_step():
             return

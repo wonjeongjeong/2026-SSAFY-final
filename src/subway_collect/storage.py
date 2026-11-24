@@ -20,12 +20,14 @@ def identity(value):
 
 
 class Store:
-    def __init__(self, root):
+    def __init__(self, root, *, initialize=True):
         self.root = Path(root)
         self.data = self.root / 'data'
         self.data.mkdir(exist_ok=True, parents=True)
         self.db = sqlite3.connect(self.data / 'subway.sqlite3', timeout=30)
         self.db.row_factory = sqlite3.Row
+        if not initialize:
+            return
         schema = Path(__file__).resolve().parents[2] / 'sql' / 'schema.sql'
         self.db.executescript(schema.read_text(encoding='utf-8'))
         self.add_missing_columns()
@@ -69,6 +71,9 @@ class Store:
     def begin_request(self, provider, dataset, target, current, budget):
         date = current.astimezone(KST).date().isoformat()
         with self.db:
+            # Serialize the count-and-reserve operation across collector lanes
+            # and the web gateway, so parallel requests cannot exceed the cap.
+            self.db.execute('BEGIN IMMEDIATE')
             count = self.db.execute('SELECT count(*) FROM requests WHERE date_kst=? AND provider=?', (date, provider)).fetchone()[0]
             if count >= budget:
                 return None
@@ -104,7 +109,7 @@ class Store:
             column = 'date_kst' if table in ('positions', 'arrivals', 'delays', 'arrival_samples', 'requests') else 'fetched_date'
             cursor = self.db.execute(f'SELECT * FROM {table} WHERE {column}=?', (date,))
             path = folder / f'{table}.csv'
-            temp = path.with_suffix('.tmp')
+            temp = path.with_suffix(f'.{uuid.uuid4().hex}.tmp')
             with temp.open('w', encoding='utf-8-sig', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow([d[0] for d in cursor.description])

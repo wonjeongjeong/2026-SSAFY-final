@@ -8,6 +8,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import os
 import shutil
+import signal
 from pathlib import Path
 import time
 
@@ -20,8 +21,8 @@ LOG = logging.getLogger('subway')
 
 
 @contextmanager
-def lock_file(data):
-    path = data / 'collector.lock'
+def lock_file(data, name='collector.lock'):
+    path = data / name
     handle = path.open('a+b')
     try:
         handle.seek(0)
@@ -37,7 +38,7 @@ def lock_file(data):
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         handle.close()
-        raise RuntimeError('Collector already running for this data directory') from None
+        raise RuntimeError(f'{name}: another process already owns this data directory') from None
     try:
         yield
     finally:
@@ -71,8 +72,13 @@ def health(config, store):
             verdict='limit_hit' if quota['limited'] else 'lifted_confirmed' if (quota['ok'] or 0) > 1000 else 'not_yet_verified'),
         disk_free_gb=round(shutil.disk_usage(store.data).free / 1e9, 1),
         local_budget_remaining=remaining,
+        collection_settings={key: config.values.get(key) for key in ('position_interval_seconds', 'arrival_sample_seconds', 'position_workers')},
+        processing=store.get('processing_status'),
         realtime_lines=config.values['lines'],
         timetable_lines=[line for line in config.values['lines'] if line in TIMETABLE_LINES],
+        static_timetables=[dict(row) for row in store.db.execute(
+            'SELECT line, day_type, valid_from, source, count(DISTINCT train_no) AS trains, count(*) AS stops '
+            'FROM static_timetable GROUP BY line, day_type, valid_from, source ORDER BY line, day_type, valid_from')],
         delay_matching=matches, last_position={line: store.get('last_position:' + line) for line in config.values['lines']},
         train_congestion='seoul_metro_quarterly_statistic_via_load_reference_not_realtime',
         realtime_platform_crowding='unavailable_no_verified_public_source')
@@ -96,8 +102,15 @@ def main(argv=None):
     modes.add_argument('--export', metavar='YYYY-MM-DD', help='날짜 데이터를 요일별 CSV로 내보내기')
     modes.add_argument('--load-reference', nargs=2, metavar=('DATASET', 'CSV'),
                        help='내려받은 정적 기준 CSV 적재: segment_times|transfer_times|station_coords|train_congestion|boarding_volume_file')
+    modes.add_argument('--load-timetable', metavar='XLSX',
+                       help='코레일 공식 전동열차 시각표 XLSX를 고정 시간표로 적재 (--valid-from 필요)')
+    parser.add_argument('--valid-from', metavar='YYYY-MM-DD', help='--load-timetable: 시각표 시행일 (제목의 "…부터")')
+    parser.add_argument('--line', help='--load-timetable: 시트 이름에 노선이 없을 때 쓸 수집 노선 이름 (예: 수인분당선)')
+    parser.add_argument('--day-type', choices=('평일', '휴일'), help='--load-timetable: 시트 이름에 평일/휴일이 없을 때')
     parser.add_argument('--config', type=Path)
     args = parser.parse_args(argv)
+    if args.load_timetable and not args.valid_from:
+        parser.error('--load-timetable needs --valid-from YYYY-MM-DD')
     config = Config.load(args.config)
     store = Store(config.root)
     try:
@@ -118,9 +131,14 @@ def main(argv=None):
             from .reference import load_reference
             print(json.dumps(load_reference(store, *args.load_reference), ensure_ascii=False, indent=2))
             return 0
+        if args.load_timetable:
+            from .korail import load_korail_timetable
+            result = load_korail_timetable(store, args.load_timetable, args.valid_from, args.line, args.day_type)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         if args.export:
             datetime.strptime(args.export, '%Y-%m-%d')
-            match_delays(store, args.export)
+            match_delays(store, args.export, config)
             print(store.export(args.export))
             return 0
         handlers = [logging.StreamHandler(), RotatingFileHandler(store.data / 'collector.log', maxBytes=5_000_000, backupCount=3, encoding='utf-8')]
@@ -128,57 +146,46 @@ def main(argv=None):
         with lock_file(store.data):
             stop_path = store.data / 'stop.request'
             stop_path.unlink(missing_ok=True)
-            runner = Runner(config, store)
-            lines = config.values['lines']
-            interval = config.values['position_interval_seconds']
-            start_tick = time.monotonic()
-            # 노선을 주기 안에 고르게 나눠 호출한다. 한 노선이 느려도 나머지가 밀리지 않는다.
-            next_due = {line: start_tick + i * interval / len(lines) for i, line in enumerate(lines)}
-            export_every = config.values.get('export_interval_seconds', 300)
-            was_active = False
-            last_health, last_export = 0.0, 0.0
-            last_date = f'{now():%Y-%m-%d}'
-            LOG.info('Started: lines=%s windows=%s; missing keys wait for .env', config.values['lines'], config.values['windows'])
+            if args.once:
+                runner = Runner(config, store)
+                if config.active(now()):
+                    runner.positions()
+                    runner.auxiliary_step()
+                else:
+                    LOG.info('Outside collection window; no HTTP requests sent')
+                match_delays(store, f'{now():%Y-%m-%d}', config)
+                write_health(config, store)
+                return 0
+            from .scheduling import CollectionScheduler
+            from .maintenance import MaintenanceProcess
+            scheduler = CollectionScheduler(config)
+            processing = MaintenanceProcess(config)
+            last_health = -float('inf')
+
+            def stop_signal(signum, frame):
+                raise KeyboardInterrupt
+
+            previous_term = signal.signal(signal.SIGTERM, stop_signal)
+            LOG.info('Started: lines=%s windows=%s position_interval=%ss arrival_interval=%ss workers=%s; missing keys wait for .env',
+                     config.values['lines'], config.values['windows'], config.values['position_interval_seconds'],
+                     config.values.get('arrival_sample_seconds'), config.values.get('position_workers', 4))
             try:
                 while not stop_path.exists():
-                    current = now()
-                    tick = time.monotonic()
-                    active = config.active(current)
-                    if active and not was_active:
-                        # 수집 시간이 시작될 때 시차를 다시 맞춰, 첫 회차에 8개 노선이 한꺼번에 몰리지 않게 한다.
-                        next_due = {line: tick + i * interval / len(lines) for i, line in enumerate(lines)}
-                    was_active = active
-                    if active:
-                        due = list(lines) if args.once else [line for line in lines if tick >= next_due[line]]
-                        for line in due:
-                            # 늦어졌으면 밀린 회차를 몰아서 부르지 않고 다음 정해진 시각으로 넘어간다.
-                            next_due[line] += interval * (int((tick - next_due[line]) // interval) + 1)
-                            runner.positions([line])
-                        runner.auxiliary_step()
-                    elif args.once:
-                        LOG.info('Outside collection window; no HTTP requests sent')
-                    if f'{current:%Y-%m-%d}' != last_date:
-                        match_delays(store, last_date)
-                        store.export(last_date)
-                        last_date = f'{current:%Y-%m-%d}'
-                    if tick-last_health >= 30 or args.once:
+                    current, tick = now(), time.monotonic()
+                    scheduler.step(current, tick)
+                    processing.ensure_running(tick)
+                    if tick - last_health >= 15:
                         write_health(config, store)
                         last_health = tick
-                    if tick-last_export >= export_every or args.once:
-                        # 주기 내보내기에서는 가장 큰 positions를 빼고, 자정·중지 때만 전체를 쓴다.
-                        match_delays(store, last_date)
-                        store.export(last_date, include_positions=False)
-                        last_export = tick
-                    if args.once:
-                        break
-                    time.sleep(0.5)
+                    time.sleep(0.2)
             except KeyboardInterrupt:
-                LOG.info('Keyboard stop requested')
+                LOG.info('Stop requested')
             finally:
-                match_delays(store, last_date)
-                store.export(last_date)
+                scheduler.close()
+                processing.close()
                 write_health(config, store)
-                LOG.info('Stopped; data preserved')
+                signal.signal(signal.SIGTERM, previous_term)
+                LOG.info('Stopped; observations preserved; CSV export can resume on next idle window')
         return 0
     except RuntimeError as exc:
         print(str(exc))
