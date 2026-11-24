@@ -4,7 +4,7 @@
   "weekdays": [0, 1, 2, 3, 4],
   "position_interval_seconds": 15,
   "position_workers": 4,
-  "arrival_sample_seconds": 15,
+  "arrival_sample_seconds": 120,
   "boarding_volume_months": 0,
   "export_interval_seconds": 3600,
   "alert_interval_seconds": 300,
