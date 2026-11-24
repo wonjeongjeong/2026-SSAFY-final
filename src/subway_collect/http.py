@@ -44,7 +44,7 @@ class Client:
         self.clock, self.opener, self.sleep = clock, opener, sleep
         self.keys = {}
 
-    def fetch(self, provider, dataset, target, url, parser, headers=None, attempts=None):
+    def fetch(self, provider, dataset, target, url, parser, headers=None, attempts=None, *, archive=True):
         fingerprint = identity(self.keys)
         block_key = f'blocked:{provider}:{fingerprint}:{self.clock():%Y-%m-%d}'
         auth_block_key = block_key + ':' + dataset
@@ -71,7 +71,8 @@ class Client:
                     status, raw = response.status, response.read()
                 safe_text = redact(raw.decode('utf-8-sig', errors='replace'), self.keys)
                 received_at = self.clock()
-                raw_path = self.store.raw(dataset, received_at, {'target': target, 'requested_at': current.isoformat(), 'collected_at': received_at.isoformat(), 'http_status': status, 'body': safe_text})
+                if archive:
+                    raw_path = self.store.raw(dataset, received_at, {'target': target, 'requested_at': current.isoformat(), 'collected_at': received_at.isoformat(), 'http_status': status, 'body': safe_text})
                 doc = decode(safe_text.encode('utf-8'))
                 result = parser(doc)
                 row_count = len(result[0]) if isinstance(result, tuple) else len(result.get('contents', []))
@@ -80,15 +81,16 @@ class Client:
             except HTTPError as exc:
                 status = exc.code
                 # Preserve redacted error bodies for diagnosis; never log their URL/text.
-                try:
-                    safe_text = redact(exc.read().decode('utf-8-sig', errors='replace'), self.keys)
-                    received_at = self.clock()
-                    raw_path = self.store.raw(dataset, received_at, {
-                        'target': target, 'requested_at': current.isoformat(),
-                        'collected_at': received_at.isoformat(), 'http_status': status,
-                        'body': safe_text})
-                except OSError:
-                    pass
+                if archive:
+                    try:
+                        safe_text = redact(exc.read().decode('utf-8-sig', errors='replace'), self.keys)
+                        received_at = self.clock()
+                        raw_path = self.store.raw(dataset, received_at, {
+                            'target': target, 'requested_at': current.isoformat(),
+                            'collected_at': received_at.isoformat(), 'http_status': status,
+                            'body': safe_text})
+                    except OSError:
+                        pass
                 exc.close()
                 code = f'http_{status}'
             except SourceError as exc:
