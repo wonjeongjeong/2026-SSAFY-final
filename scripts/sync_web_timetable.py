@@ -5,6 +5,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import argparse
+from contextlib import redirect_stdout
+import io
 
 ROOT=Path(__file__).resolve().parents[1]
 REMOTE=r'''
@@ -24,11 +27,21 @@ print(base64.b64encode(gzip.compress(json.dumps(doc,ensure_ascii=False,separator
 '''
 
 def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--local',action='store_true',help='Run on EC2 itself without SSH')
+    args=parser.parse_args()
     ssh=str(Path(os.environ.get('WINDIR','C:/Windows'))/'System32/OpenSSH/ssh.exe') if os.name=='nt' else 'ssh'
-    p=subprocess.run([ssh,'-T','-o','BatchMode=yes','-o','ConnectTimeout=8','subway-collector','python3 -'],input=REMOTE,text=True,encoding='utf-8',capture_output=True,timeout=90)
-    if p.returncode:
-        raise SystemExit('Could not read the EC2 timetable; check the SSH connection.')
-    content=base64.b64decode(p.stdout.strip(),validate=True)
+    if args.local:
+        output=io.StringIO()
+        with redirect_stdout(output):
+            exec(compile(REMOTE,'<local-timetable-export>','exec'),{})
+        encoded=output.getvalue()
+    else:
+        p=subprocess.run([ssh,'-T','-o','BatchMode=yes','-o','ConnectTimeout=8','subway-collector','python3 -'],input=REMOTE,text=True,encoding='utf-8',capture_output=True,timeout=90)
+        if p.returncode:
+            raise SystemExit('Could not read the EC2 timetable; check the SSH connection.')
+        encoded=p.stdout
+    content=base64.b64decode(encoded.strip(),validate=True)
     doc=json.loads(gzip.decompress(content))
     if not doc['rows']:
         raise SystemExit('No timetable rows returned; existing cache preserved.')
