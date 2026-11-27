@@ -124,6 +124,27 @@ python ../../../collector.py --status    # static_timetables에 노선·요일·
 
 ## 프로젝트 구성과 다음 단계
 
+### KRIC 추가 시간표
+
+`.env`에 `KRIC_API_KEY=발급키`를 설정합니다. `.env`는 Git에서 제외됩니다.
+공식 제공 API는 `subwayRouteInfo`, `subwayTimetable`, `subwayTimetableExp`이며
+동일 키를 사용합니다. 현재 확인한 9호선·수인분당·경춘·경의중앙·공항철도·신분당·우이신설을
+수집기에 연결했습니다. 공식 호스트가 DNS 해석되지 않아 실제 인증 응답을 확인한
+`https://data.kric.go.kr/openapi/trainUseInfo/`를 사용합니다.
+
+`python collector.py --sync-kric 2000`으로 즉시 수집하거나 기존 수집기를 실행하면
+보조 작업에서 이어받습니다. 요청별 완료 지점을 저장하고 하루 로컬 호출 예산은 2,000회입니다.
+일반/급행, 평일(8)/토요일(7)/휴일(9)을 역별로 받고 원문과 `kric_timetable`에 보관합니다.
+실패 시 10분 대기하며 다음 실행에서 재시도합니다. 매일 새 스냅샷을 받습니다.
+전체 작업이 예산을 넘으면 당일 전량 수집을 보장하지 않습니다.
+
+시간표 응답에는 방향 필드가 없어서 **현재 지연 매칭에는 자동 병합하지 않습니다**.
+방향/열차번호/최신성 검증 후 서비스 연결이 필요합니다. 경강·서해·신림·GTX-A의
+KRIC 노선 코드는 아직 확인되지 않아 수집 완료 대상으로 표시하지 않습니다.
+EC2에는 이 코드와 서버 `.env` 설정을 별도로 반영해야 합니다.
+
+공식 명세: [KRIC 시간표](https://data.kric.go.kr/rips/M_01_02/detail.do?id=162&operation=subwayTimetable&service=trainUseInfo).
+
 ```text
 src/subway_collect/   # 실제 동작: API·스케줄·저장·도착/지연 산출
 config/              # 노선·시간대·호출 예산·공휴일 보정
@@ -131,11 +152,11 @@ sql/                 # SQLite 스키마
 scripts/             # Windows 백그라운드·자동 실행·백업
 tests/               # 중복·재시작·오류·시각·지연/통계 검증
 docs/                # 기획서 사본·요구사항·출처·데이터 계약
-pipelines/streaming/ # Kafka→Flink→Redis/HDFS 설계
+pipelines/streaming/ # Kafka 위치 스트림 실행법·후속 처리 설계
 pipelines/batch/     # Spark·Airflow 설계
 ml/                  # P50/P95·환승/탑승 대기 모델 설계
 services/            # FastAPI·웹 서비스 설계
-infra/               # 향후 공통 개발 환경 구성 계획
+infra/               # 로컬 Kafka Compose·EC2 전송 서비스 템플릿
 ```
 
-Kafka·Flink·Spark·Airflow·ML·웹은 이후 구현 범위입니다. 현재 수집 데이터를 그대로 재처리할 수 있도록 원본·이벤트 식별자·시간 품질을 보존합니다. 상세 내용은 [요구사항](docs/requirements.md), [데이터 출처와 제약](docs/data-sources.md), [데이터 계약](docs/data-contract.md)을 참고하세요.
+Kafka 위치 전송기와 로컬 웹 초안이 구현되어 있습니다. `kafka_pipeline.py`는 기존 SQLite에 커밋된 위치를 별도 프로세스에서 Kafka로 보내며, 실패 시 마지막 ACK 체크포인트부터 재시도합니다. [Kafka 실행·EC2 연결 방법](pipelines/streaming/README.md)을 참고하세요. Flink·Redis 및 스트림 결과의 추천 API 연결, Spark·Airflow·ML은 후속 범위입니다. 상세 내용은 [요구사항](docs/requirements.md), [데이터 출처와 제약](docs/data-sources.md), [데이터 계약](docs/data-contract.md)을 참고하세요.

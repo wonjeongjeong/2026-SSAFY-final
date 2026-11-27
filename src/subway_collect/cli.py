@@ -99,6 +99,7 @@ def main(argv=None):
     modes.add_argument('--once', action='store_true', help='운영 시간 내 위치 1회 + 보조 데이터 1요청')
     modes.add_argument('--status', action='store_true', help='키 값 없이 수집 상태 출력')
     modes.add_argument('--doctor', action='store_true', help='인증키·호출 예산·제공 한계 확인; 네트워크 요청 없음')
+    modes.add_argument('--sync-kric', type=int, metavar='MAX_REQUESTS', help='KRIC 시간표를 지정 요청 수만큼 이어받기')
     modes.add_argument('--export', metavar='YYYY-MM-DD', help='날짜 데이터를 요일별 CSV로 내보내기')
     modes.add_argument('--load-reference', nargs=2, metavar=('DATASET', 'CSV'),
                        help='내려받은 정적 기준 CSV 적재: segment_times|transfer_times|station_coords|train_congestion|boarding_volume_file')
@@ -114,6 +115,17 @@ def main(argv=None):
     config = Config.load(args.config)
     store = Store(config.root)
     try:
+        if args.sync_kric is not None:
+            from .kric import step
+            completed = 0
+            with lock_file(store.data, 'kric.lock'):
+                for _ in range(max(0, args.sync_kric)):
+                    if not step(config, store):
+                        break
+                    completed += 1
+                    time.sleep(0.3)
+            print(json.dumps({'steps': completed, 'rows': store.db.execute('SELECT count(*) FROM kric_timetable').fetchone()[0]}))
+            return 0
         if args.status or args.doctor:
             result = health(config, store)
             if args.doctor:

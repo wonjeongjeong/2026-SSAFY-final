@@ -73,6 +73,11 @@ class Runner:
             return
         if include_arrivals and self.keys['SEOUL_SUBWAY_API_KEY'] and self.config.values.get('arrival_sample_seconds') and self.arrival_step():
             return
+        if self.keys.get('KRIC_API_KEY') and self.available('kric'):
+            from .kric import step
+            if step(self.config, self.store, self.clock):
+                self.retry_at['kric'] = time.monotonic() + 5
+                return
         if self.keys['SEOUL_OPEN_API_KEY'] and self.config.values.get('boarding_volume_months') and self.boarding_volume_step():
             return
         if self.keys['DATA_GO_KR_API_KEY']:

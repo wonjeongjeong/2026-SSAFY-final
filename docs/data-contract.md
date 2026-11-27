@@ -46,6 +46,6 @@
 
 `car_no IS NULL`은 열차 전체 통계, 1 이상은 칸별 통계입니다. `measurement_kind`는 반드시 `historical_statistic`입니다. `fetched_date`는 다운로드 날짜, `dow`는 원천 통계 요일, `stat_start_date`/`stat_end_date`는 집계 기간입니다. `train_no`를 만들어 붙이지 않습니다. 운행 조합은 이전역·시작역·종착역·방향으로 보존하고 향후 실시간 열차에 매핑하면 **통계 기반 추정**으로 표시합니다.
 
-## 후속 Kafka 이벤트
+## Kafka 위치 이벤트
 
-다음 단계에서 원문 아카이브를 재생할 때 `schema_version`, `event_id`, `source`, `measurement_kind`, `source_timestamp`, `collected_at`, `date_kst`, `dow`, `payload`를 공통 봉투로 사용합니다. 현 단계에 Kafka 전송·exactly-once 보장은 구현되어 있지 않습니다.
+`kafka_pipeline.py`가 커밋된 SQLite 위치 행을 `subway.positions.raw.v1`로 전송합니다. `schema_version`, `event_id`, `source`, `measurement_kind`, `source_timestamp`, `collected_at`, `date_kst`, `dow`, `payload`를 공통 봉투로 사용하고 정규화 필드 `position`을 포함합니다. 배치 전체 ACK 뒤 커서를 저장하는 at-least-once 전달이며, 재시작 중복은 소비자가 `event_id`로 제거해야 합니다. exactly-once 보장은 구현되어 있지 않습니다. 도착·지연 토픽 및 Flink/Redis 소비자는 후속 범위입니다. [이벤트 키·복구·시작점 계약](../pipelines/streaming/README.md)을 참고하세요.

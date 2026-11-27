@@ -1,0 +1,22 @@
+[Unit]
+Description=Subway SQLite to Kafka position relay
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/2026-SSAFY-final
+EnvironmentFile=/home/ubuntu/2026-SSAFY-final/config/kafka-publisher.env
+# Bootstrap file: KAFKA_BOOTSTRAP_SERVERS=<reachable private host:port>
+# Initialize the checkpoint manually using --start before enabling this unit.
+ExecStart=/home/ubuntu/2026-SSAFY-final/.venv-kafka/bin/python kafka_pipeline.py publish --bootstrap-servers ${KAFKA_BOOTSTRAP_SERVERS}
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=45
+KillSignal=SIGINT
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

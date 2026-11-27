@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 KST = timezone(timedelta(hours=9))
 DAYS = ('MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN')
-KEY_NAMES = ('SEOUL_SUBWAY_API_KEY', 'SEOUL_OPEN_API_KEY', 'DATA_GO_KR_API_KEY')
+KEY_NAMES = ('SEOUL_SUBWAY_API_KEY', 'SEOUL_OPEN_API_KEY', 'DATA_GO_KR_API_KEY', 'KRIC_API_KEY')
 # 2026-11-16 실제 인증 응답으로 확인한 19개 노선. 시간표 범위와 분리한다.
 LINE_IDS = {
     **{f'{n}호선': str(1000 + n) for n in range(1, 10)},

@@ -1,5 +1,8 @@
 .env
 .venv/
+.venv-*/
+kafka-client.local.json
+config/kafka-publisher.env
 __pycache__/
 *.pyc
 data/

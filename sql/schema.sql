@@ -1,4 +1,12 @@
 PRAGMA journal_mode=WAL;
+CREATE TABLE IF NOT EXISTS kric_timetable (
+ event_id TEXT PRIMARY KEY, fetched_date TEXT NOT NULL, line TEXT NOT NULL,
+ operator_code TEXT NOT NULL, line_code TEXT NOT NULL, station_code TEXT NOT NULL,
+ station_name TEXT NOT NULL, station_order INTEGER, day_code TEXT NOT NULL,
+ train_no TEXT NOT NULL, arrival_time TEXT, departure_time TEXT,
+ express_code TEXT, endpoint TEXT NOT NULL, payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS kric_timetable_lookup ON kric_timetable(fetched_date,line,day_code,train_no);
 CREATE TABLE IF NOT EXISTS requests (
  id INTEGER PRIMARY KEY, started_at TEXT NOT NULL, date_kst TEXT NOT NULL,
  dow TEXT NOT NULL, provider TEXT NOT NULL, dataset TEXT NOT NULL,
