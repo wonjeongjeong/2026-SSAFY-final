@@ -123,7 +123,6 @@ def consume(consumer, processor):
         messages = consumer.consume(num_messages=250, timeout=1)
         if not messages:
             continue
-        from confluent_kafka import TopicPartition
         offsets = {}
         for message in messages:
             if message.error():
@@ -131,6 +130,7 @@ def consume(consumer, processor):
             # Poison events fail closed without committing this batch.
             processor.process(json.loads(message.value()))
             offsets[(message.topic(),message.partition())] = message.offset()+1
+        from confluent_kafka import TopicPartition
         consumer.commit(offsets=[TopicPartition(topic,partition,offset)
             for (topic,partition),offset in offsets.items()], asynchronous=False)
 
