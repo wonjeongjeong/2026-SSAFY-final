@@ -108,12 +108,23 @@ class StreamTests(Fixture):
         message.error.return_value = None
         message.value.return_value = json.dumps(self.event(30)).encode()
         consumer = Mock()
-        consumer.poll.return_value = message
+        consumer.consume.return_value = [message]
         processor = Mock()
         processor.process.side_effect = OSError('Redis unavailable')
         with self.assertRaises(OSError):
             consume(consumer, processor)
         consumer.commit.assert_not_called()
+
+    def test_unchanged_timetable_reuses_index_but_new_rows_refresh_it(self):
+        from src.subway_collect.stream_state import MatcherCache
+        factory=MatcherCache(self.store,self.config)
+        first=factory('2026-11-10')
+        self.assertIs(factory('2026-11-10'),first)
+        with self.store.db:
+            self.store.db.execute("UPDATE timetable SET event_id='new-id'")
+            # Existing API pages append rows; a new identity simulates that.
+            self.store.db.execute("INSERT INTO timetable SELECT 'second',fetched_date,line,train_no,station_id,station_name,direction,day_type,arrival_time,departure_time,payload_json FROM timetable LIMIT 1")
+        self.assertIsNot(factory('2026-11-10'),first)
 
     @unittest.skipUnless(os.environ.get('REDIS_TEST_URL'), 'opt-in Redis integration')
     def test_real_redis_lua_monotonicity_and_snapshot(self):

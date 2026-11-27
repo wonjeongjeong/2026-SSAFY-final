@@ -120,14 +120,36 @@ def serve(cache, port):
 
 def consume(consumer, processor):
     while True:
-        message = consumer.poll(1)
-        if message is None:
+        messages = consumer.consume(num_messages=250, timeout=1)
+        if not messages:
             continue
-        if message.error():
-            raise RuntimeError('Kafka consume failed')
-        # Poison events fail closed without committing; inspect before recovery.
-        processor.process(json.loads(message.value()))
-        consumer.commit(message=message, asynchronous=False)
+        from confluent_kafka import TopicPartition
+        offsets = {}
+        for message in messages:
+            if message.error():
+                raise RuntimeError('Kafka consume failed')
+            # Poison events fail closed without committing this batch.
+            processor.process(json.loads(message.value()))
+            offsets[(message.topic(),message.partition())] = message.offset()+1
+        consumer.commit(offsets=[TopicPartition(topic,partition,offset)
+            for (topic,partition),offset in offsets.items()], asynchronous=False)
+
+
+class MatcherCache:
+    """Refresh only when source timetables change, not on every 30s tick."""
+    def __init__(self, store, config):
+        self.store, self.config = store, config
+        self.signature, self.matcher = None, None
+
+    def __call__(self, date):
+        api = tuple(self.store.db.execute('SELECT count(*),max(rowid) FROM timetable WHERE fetched_date=?',(date,)).fetchone())
+        static = tuple(self.store.db.execute('SELECT count(*),max(rowid),max(loaded_at) FROM static_timetable').fetchone())
+        from .derive import static_day_type
+        signature = (date,api,static,static_day_type(self.store,date,self.config))
+        if signature != self.signature:
+            self.matcher = DelayMatcher(self.store,date,self.config)
+            self.signature = signature
+        return self.matcher
 
 
 def main():
@@ -150,10 +172,11 @@ def main():
     config = Config.load(root=args.root)
     consumer = Consumer({'bootstrap.servers':args.bootstrap_servers, 'group.id':args.group,
         'enable.auto.commit':False, 'enable.auto.offset.store':False,
-        'auto.offset.reset':'earliest', 'allow.auto.create.topics':False})
+        'auto.offset.reset':'earliest', 'allow.auto.create.topics':False,
+        'session.timeout.ms':120000, 'heartbeat.interval.ms':3000})
     try:
         consumer.subscribe(['subway.positions.raw.v1'])
-        consume(consumer, Processor(cache, lambda date: DelayMatcher(store, date, config)))
+        consume(consumer, Processor(cache, MatcherCache(store,config)))
     finally:
         consumer.close()
         store.close()
