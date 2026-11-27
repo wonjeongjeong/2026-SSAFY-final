@@ -73,6 +73,15 @@ def collect_snapshot(store, config, client, clock):
 
 
 def run():
+    # Stream state is served locally on EC2; no API key or Redis port crosses SSH.
+    try:
+        from urllib.request import urlopen
+        with urlopen('http://127.0.0.1:8787/snapshot',timeout=2) as response:
+            feed=json.load(response)
+        print(json.dumps(feed,ensure_ascii=True))
+        return
+    except (OSError,ValueError):
+        pass
     now=datetime.now(timezone(timedelta(hours=9)))
     store=ExistingStore()
     config=Config.load(root=root)

@@ -1,5 +1,14 @@
 name: subway-streaming
 services:
+  redis:
+    image: redis:7.4.2-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: ["redis-server", "--maxmemory", "48mb", "--maxmemory-policy", "noeviction", "--appendonly", "yes", "--appendfsync", "everysec"]
+    mem_limit: 96m
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
   kafka-volume-init:
     image: apache/kafka:4.1.1
     user: "0:0"
@@ -39,3 +48,4 @@ services:
     restart: unless-stopped
 volumes:
   kafka-data:
+  redis-data:

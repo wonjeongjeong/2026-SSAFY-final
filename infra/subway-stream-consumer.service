@@ -1,0 +1,15 @@
+[Unit]
+Description=Subway Kafka to Redis state processor
+After=network-online.target docker.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/2026-SSAFY-final
+ExecStart=/home/ubuntu/2026-SSAFY-final/.venv-kafka/bin/python -B stream_pipeline.py consume
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGINT
+NoNewPrivileges=true
+[Install]
+WantedBy=multi-user.target

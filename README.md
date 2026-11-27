@@ -124,6 +124,9 @@ python ../../../collector.py --status    # static_timetables에 노선·요일·
 
 ## 프로젝트 구성과 다음 단계
 
+Kafka 이후 단계는 [실시간 처리·Redis·웹 연결](docs/stream-serving.md)을 참고하세요.
+`stream_pipeline.py`가 위치 스트림으로 도착·지연을 계산하고 Redis 최신 상태 API를 제공합니다.
+
 ### KRIC 추가 시간표
 
 `.env`에 `KRIC_API_KEY=발급키`를 설정합니다. `.env`는 Git에서 제외됩니다.

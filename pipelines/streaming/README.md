@@ -5,8 +5,8 @@
 커밋된 새 위치 행을 최대 500개씩 읽으며 대기 중에는 1초마다 확인합니다.
 API를 추가 호출하거나 위치 원문을 별도 outbox에 복제하지 않습니다.
 
-Flink 정제·도착/지연 스트림, Redis, 추천 API의 Kafka 결과 연결은 다음 단계입니다.
-기존 Python `derive.py` 계산은 계속 실행하며 검증 기준으로 사용합니다.
+Python 소비자의 도착·지연 계산, Redis 및 추천 API 연결은 [stream-serving.md](../../docs/stream-serving.md)에 구현되어 있습니다.
+Flink 전환은 후속 범위이며 기존 Python `derive.py` 매칭 규칙을 재사용합니다.
 
 ## 로컬 실행 (저장소 루트)
 

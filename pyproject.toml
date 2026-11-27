@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-kafka = ["confluent-kafka==2.12.2"]
+kafka = ["confluent-kafka==2.12.2", "redis==5.2.1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

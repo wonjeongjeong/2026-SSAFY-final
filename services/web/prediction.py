@@ -38,7 +38,16 @@ def apply_live(runs,feed,now):
     anchors=defaultdict(dict)
     stats={'received':len(feed.get('arrivals',[])),'used_anchors':0,'matched_trains':0,'stale':0,'ambiguous':0,'unmatched':0,'past_eta':0}
     observations=list(feed.get('arrivals',[])) if feed.get('available') else []
+    for row in feed.get('delays',[]) if feed.get('available') else []:
+        if row.get('match_status')!='matched_observation_interval': continue
+        line=BY_LINE_NAME.get(row.get('line'))
+        observations.append({'subwayId':next((k for k,v in API_IDS.items() if v==line),''),
+            'statnNm':row.get('station_name'),'recptnDt':row.get('observed_at'),
+            'updnLine':{'0':'상행','1':'하행'}.get(row.get('direction')),
+            'btrainNo':row.get('train_no'),'bstatnNm':row.get('destination'),
+            '_position':True,'_stream_delay':True,'_scheduled_at':row.get('scheduled_at')})
     for row in feed.get('positions',[]) if feed.get('available') else []:
+        if feed.get('source')=='kafka_redis': continue  # use bounded, timetable-verified anchors
         status=str(row.get('trainSttus'))
         if status not in ('1','2'): continue
         line=BY_LINE_NAME.get(row.get('line'))
@@ -51,14 +60,14 @@ def apply_live(runs,feed,now):
         line=API_IDS.get(str(row.get('subwayId')))
         sid=station_id(line,row.get('statnNm'))
         observed=parse_time(row.get('recptnDt'))
-        if observed is None or not -5<=now_ts-observed<=180:
+        if observed is None or not -5<=now_ts-observed<=(90 if row.get('_stream_delay') else 180):
             stats['stale']+=1;continue
         try: eta=0 if row.get('_position') else int(row.get('barvlDt'))
         except (ValueError,TypeError): continue
         # Zero is often 'no estimate'; never turn that into a guaranteed arrival.
         if eta<=0 and not row.get('_position'): continue
         predicted=observed+eta
-        if predicted<now_ts-15:
+        if predicted<now_ts-15 and not row.get('_stream_delay'):
             stats['past_eta']+=1;continue
         direction={'상행':'0','내선':'0','하행':'1','외선':'1'}.get(row.get('updnLine'))
         candidates={}
@@ -73,6 +82,9 @@ def apply_live(runs,feed,now):
             if express in ('급행','특급') and not run['express']: continue
             for i,stop in enumerate(run['stops']):
                 schedule=stop['scheduled_departure'] if row.get('_departure') else stop['scheduled_arrival']
+                if row.get('_stream_delay'):
+                    verified=parse_time(row.get('_scheduled_at'))
+                    if verified is None or abs(verified-schedule)>1: continue
                 if stop['station']==sid and abs(predicted-schedule)<=1200:
                     matches.append((run,i,stop))
         if len(matches)!=1:

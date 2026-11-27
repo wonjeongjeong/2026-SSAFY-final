@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import threading
 import time
+from urllib.request import urlopen
 
 _lock=threading.Lock()
 _cached=None
@@ -18,6 +19,12 @@ def live_snapshot():
             return _cached
         ssh=str(Path(os.environ.get('WINDIR','C:/Windows'))/'System32/OpenSSH/ssh.exe') if os.name=='nt' else 'ssh'
         try:
+            endpoint=os.environ.get('LIVE_SNAPSHOT_URL')
+            if endpoint:
+                with urlopen(endpoint,timeout=3) as response:
+                    _cached=json.load(response)
+                _expires=time.monotonic()+5
+                return _cached
             p=subprocess.run([ssh,'-T','-o','BatchMode=yes','-o','ConnectTimeout=5','-o','ServerAliveInterval=5','-o','ServerAliveCountMax=1','subway-collector','python3 -'],input=Path(__file__).with_name('live_gateway_remote.py').read_text(encoding='utf-8'),text=True,encoding='utf-8',capture_output=True,timeout=20)
             if p.returncode: raise ValueError('SSH failed')
             _cached=json.loads(p.stdout)

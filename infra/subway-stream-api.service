@@ -1,0 +1,14 @@
+[Unit]
+Description=Subway internal realtime snapshot API
+After=network-online.target docker.service
+StartLimitIntervalSec=0
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/2026-SSAFY-final
+ExecStart=/home/ubuntu/2026-SSAFY-final/.venv-kafka/bin/python -B stream_pipeline.py serve
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGINT
+NoNewPrivileges=true
+[Install]
+WantedBy=multi-user.target

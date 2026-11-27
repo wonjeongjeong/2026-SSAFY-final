@@ -1,0 +1,13 @@
+[Unit]
+Description=Subway internal route recommendation web
+After=network-online.target subway-stream-api.service
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/2026-SSAFY-final
+Environment=LIVE_SNAPSHOT_URL=http://127.0.0.1:8787/snapshot
+ExecStart=/home/ubuntu/2026-SSAFY-final/.venv-kafka/bin/python -B services/web/server.py --port 5173
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+[Install]
+WantedBy=multi-user.target

@@ -25,6 +25,21 @@ def run(line,number,stops,direction='1',express=False):
 
 
 class PlannerTests(unittest.TestCase):
+    def test_stream_delay_changes_only_verified_service_occurrence(self):
+        current=DAY.replace(hour=7,minute=25)
+        runs=[run('GTX-A','X1079',[('대곡','07:24'),('서울역','07:36')])]
+        delay={'line':'GTX-A','train_no':'X1079','station_name':'대곡','direction':'1',
+            'destination':'서울역','observed_at':current.isoformat(),
+            'scheduled_at':DAY.replace(hour=7,minute=24).isoformat(),
+            'match_status':'matched_observation_interval'}
+        feed={'available':True,'source':'kafka_redis','delays':[delay]}
+        predicted,stats=apply_live(runs,feed,current)
+        self.assertEqual(stats['used_anchors'],1)
+        self.assertEqual(predicted[0]['stops'][-1]['arrival'],at('07:37'))
+        delay['scheduled_at']=DAY.replace(hour=6,minute=24).isoformat()
+        _,stats=apply_live(runs,feed,current)
+        self.assertEqual(stats['used_anchors'],0)
+
     def setUp(self):
         self.now=DAY.replace(hour=7,minute=15)
         self.payload={'origin':IDS['대곡'],'destination':IDS['역삼'],'deadline':DAY.replace(hour=8,minute=40).isoformat(),
