@@ -71,7 +71,11 @@ class Processor:
                 self.matcher = self.matcher_factory(p['date_kst'])
                 self.date, self.refresh_at = p['date_kst'], tick+30
             calculated = self.matcher.values(arrival)
-            delay = {**calculated, 'direction':p['direction'], 'destination':raw.get('statnTnm')} if calculated['match_status'] == 'matched_observation_interval' else None
+            # Very early matches can be another circulation of the same train.
+            # Keep historical matcher outputs separate from serving confidence.
+            usable = (calculated['match_status'] == 'matched_observation_interval'
+                      and -120 <= calculated['delay_seconds'] <= 1200)
+            delay = {**calculated, 'direction':p['direction'], 'destination':raw.get('statnTnm')} if usable else None
         value = dict(event_id=event['event_id'], observed_epoch=epoch, position=p,
                      payload=raw, delay=delay, processed_at=current.isoformat())
         saved = self.cache.eval(SAVE, 2, key, PREFIX+'index', epoch, dumps(value), current.timestamp()-180)

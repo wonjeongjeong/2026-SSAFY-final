@@ -40,6 +40,9 @@ def apply_live(runs,feed,now):
     observations=list(feed.get('arrivals',[])) if feed.get('available') else []
     for row in feed.get('delays',[]) if feed.get('available') else []:
         if row.get('match_status')!='matched_observation_interval': continue
+        try:
+            if not -120 <= float(row['delay_seconds']) <= 1200: continue
+        except (KeyError,TypeError,ValueError): continue
         line=BY_LINE_NAME.get(row.get('line'))
         observations.append({'subwayId':next((k for k,v in API_IDS.items() if v==line),''),
             'statnNm':row.get('station_name'),'recptnDt':row.get('observed_at'),
@@ -71,7 +74,11 @@ def apply_live(runs,feed,now):
             stats['past_eta']+=1;continue
         direction={'상행':'0','내선':'0','하행':'1','외선':'1'}.get(row.get('updnLine'))
         candidates={}
-        for key in number_keys(row.get('btrainNo')):
+        numbers=number_keys(row.get('btrainNo'))
+        number=str(row.get('btrainNo') or '')
+        if row.get('_stream_delay') and line=='2' and len(number)==4 and number.isdigit() and number[0]!='2':
+            numbers.add('2'+number[1:])
+        for key in numbers:
             for run in index.get((line,key),[]): candidates[run['id']]=run
         matches=[]
         for run in candidates.values():

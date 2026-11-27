@@ -31,7 +31,7 @@ class PlannerTests(unittest.TestCase):
         delay={'line':'GTX-A','train_no':'X1079','station_name':'대곡','direction':'1',
             'destination':'서울역','observed_at':current.isoformat(),
             'scheduled_at':DAY.replace(hour=7,minute=24).isoformat(),
-            'match_status':'matched_observation_interval'}
+            'match_status':'matched_observation_interval','delay_seconds':60}
         feed={'available':True,'source':'kafka_redis','delays':[delay]}
         predicted,stats=apply_live(runs,feed,current)
         self.assertEqual(stats['used_anchors'],1)

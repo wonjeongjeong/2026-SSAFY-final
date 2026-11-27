@@ -96,6 +96,13 @@ class StreamTests(Fixture):
         self.processor.process(self.event(30, '1'))
         self.assertEqual(snapshot(self.cache, self.current)['delays'], [])
 
+    def test_implausibly_early_match_is_not_served(self):
+        with self.store.db:
+            self.store.db.execute("UPDATE timetable SET arrival_time='181730'")
+        self.processor.process(self.event(0))
+        self.processor.process(self.event(30,'1'))
+        self.assertEqual(snapshot(self.cache,self.current)['delays'],[])
+
     def test_redis_failure_prevents_kafka_commit(self):
         message = Mock()
         message.error.return_value = None
